@@ -22,6 +22,7 @@ import (
 )
 
 var systemTestConfigFilePattern = regexp.MustCompile(`^test-([a-z0-9_.-]+)-config.yml$`)
+var systemTestRulesFile = "detection-rules.json"
 
 type testConfig struct {
 	testrunner.SkippableConfig `config:",inline"`
@@ -39,7 +40,8 @@ type testConfig struct {
 	// type but can be ingested as numeric type.
 	NumericKeywordFields []string `config:"numeric_keyword_fields"`
 
-	Path string
+	Path      string
+	RulesPath string
 }
 
 func (t testConfig) Name() string {
@@ -75,6 +77,9 @@ func newConfig(configFilePath string, ctxt servicedeployer.ServiceContext) (*tes
 	}
 	// Save path
 	c.Path = configFilePath
+
+	c.RulesPath = findRulesFile(filepath.Dir(configFilePath))
+
 	return &c, nil
 }
 
@@ -111,4 +116,13 @@ func applyContext(data []byte, ctxt servicedeployer.ServiceContext) ([]byte, err
 		return data, errors.Wrap(err, "could not render data with context")
 	}
 	return []byte(result), nil
+}
+
+func findRulesFile(systemTestFolderPath string) (file string) {
+	fHandle, err := os.Open(filepath.Join(systemTestFolderPath, systemTestRulesFile))
+	if err != nil {
+		return ""
+	}
+	defer fHandle.Close()
+	return filepath.Join(systemTestFolderPath, systemTestRulesFile)
 }

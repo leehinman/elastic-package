@@ -6,6 +6,8 @@ package packages
 
 import (
 	"encoding/json"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -238,4 +240,17 @@ func isDataStreamManifest(path string) (bool, error) {
 		return false, errors.Wrapf(err, "reading package manifest failed (path: %s)", path)
 	}
 	return m.Title != "" && (m.Type == dataStreamTypeLogs || m.Type == dataStreamTypeMetrics), nil
+}
+
+// ReadDetectionRules if they exist
+func ReadDetectionRules(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil && errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return io.ReadAll(f)
 }

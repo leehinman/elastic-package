@@ -55,6 +55,7 @@ type runner struct {
 	resetAgentPolicyHandler func() error
 	shutdownServiceHandler  func() error
 	wipeDataStreamHandler   func() error
+	deleteRulesHandler      func() error
 }
 
 // Type returns the type of test that can be run by this test runner.
@@ -106,6 +107,13 @@ func (r *runner) TearDown() error {
 			return err
 		}
 		r.wipeDataStreamHandler = nil
+	}
+
+	if r.deleteRulesHandler != nil {
+		if err := r.deleteRulesHandler(); err != nil {
+			return err
+		}
+		r.deleteRulesHandler = nil
 	}
 
 	return nil
@@ -398,6 +406,46 @@ func (r *runner) runTest(config *testConfig, ctxt servicedeployer.ServiceContext
 
 	if !passed {
 		result.FailureMsg = fmt.Sprintf("could not find hits in %s data stream", dataStream)
+	}
+
+	if config.RulesPath != "" {
+		logger.Debugf("loading detection rules from %s", config.RulesPath)
+		detectionRules, err := packages.ReadDetectionRules(config.RulesPath)
+		if err != nil {
+			return result.WithError(errors.Wrap(err, "reading detection rules failed"))
+		}
+		detectionRulesIds, err := kib.RulesBulkCreate(detectionRules)
+		logger.Debugf("detection rule ids: %v", detectionRulesIds)
+		if err != nil {
+			return result.WithError(errors.Wrap(err, "error with rules bulk create"))
+		}
+		r.deleteRulesHandler = func() error {
+			logger.Debug("deleting detection rules...")
+			if err := kib.RulesBulkDelete(detectionRulesIds); err != nil {
+				return errors.Wrap(err, "error with rules bulk delete")
+			}
+			return nil
+		}
+		logger.Debug("Sleeping to give rules time to fire")
+		time.Sleep(5 * time.Second)
+		hits, err := kib.RulesGetHits()
+		if err != nil {
+			return result.WithError(errors.Wrap(err, "failed to get detection rule results"))
+		}
+		if hits.Hits.Total.Value != 0 {
+			counts := make(map[string]int)
+			for _, v := range hits.Hits.Hits {
+				counts[v.Source.Signal.Rule.Name] = counts[v.Source.Signal.Rule.Name] + 1
+			}
+			for k, v := range counts {
+				logger.Debugf("detection rule %s was hit %d times", k, v)
+			}
+			result.FailureMsg = "detection rules hit"
+		}
+		err = kib.RulesCloseSignals()
+		if err != nil {
+			return result.WithError(err)
+		}
 	}
 	return result.WithSuccess()
 }
